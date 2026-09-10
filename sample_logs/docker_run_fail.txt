@@ -1,0 +1,50 @@
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 312B done
+#1 DONE 0.0s
+
+#2 [internal] load .dockerignore
+#2 transferring context: 2B done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/node:20-slim
+#3 DONE 0.4s
+
+#4 [1/7] FROM docker.io/library/node:20-slim
+#4 CACHED
+
+#5 [internal] load build context
+#5 transferring context: 48.32kB done
+#5 DONE 0.0s
+
+#6 [2/7] WORKDIR /app
+#6 CACHED
+
+#7 [3/7] COPY package.json package-lock.json ./
+#7 CACHED
+
+#8 [4/7] RUN npm ci
+#8 0.412 npm ERR! code EUSAGE
+#8 0.413 npm ERR!
+#8 0.413 npm ERR! `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with `npm install` before continuing.
+#8 0.414 npm ERR!
+#8 0.414 npm ERR! Missing: nanoid@5.0.7 from lock file
+#8 0.415 npm ERR!
+#8 0.415 npm ERR! A complete log of this run can be found in: /root/.npm/_logs/2026-09-09T09_58_02_331Z-debug-0.log
+#8 ERROR: process "/bin/sh -c npm ci" did not complete successfully: exit code: 1
+------
+ > [4/7] RUN npm ci:
+0.412 npm ERR! code EUSAGE
+0.413 npm ERR!
+0.413 npm ERR! `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with `npm install` before continuing.
+0.414 npm ERR!
+0.414 npm ERR! Missing: nanoid@5.0.7 from lock file
+------
+Dockerfile:7
+--------------------
+   5 |     COPY package.json package-lock.json ./
+   6 |
+   7 | >>> RUN npm ci
+   8 |
+   9 |     COPY . .
+--------------------
+ERROR: failed to solve: process "/bin/sh -c npm ci" did not complete successfully: exit code: 1

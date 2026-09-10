@@ -1,0 +1,16 @@
+$ python manage.py runserver
+Watching for file changes with StatReloader
+Performing system checks...
+
+Traceback (most recent call last):
+  File "manage.py", line 22, in <module>
+    main()
+  File "manage.py", line 18, in main
+    execute_from_command_line(sys.argv)
+  File "/home/dev/venv/lib/python3.11/site-packages/django/core/management/__init__.py", line 442, in execute_from_command_line
+    utility.execute()
+  File "/home/dev/venv/lib/python3.11/site-packages/django/core/management/__init__.py", line 436, in execute
+    self.fetch_command(subcommand).run_from_argv(self.argv)
+  File "/home/dev/project/app/urls.py", line 3, in <module>
+    import requests_oauthlib
+ModuleNotFoundError: No module named 'requests_oauthlib'

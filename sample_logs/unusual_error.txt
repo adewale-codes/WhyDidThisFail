@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "train.py", line 41, in <module>
+    loss = compute_loss(predictions, targets)
+  File "train.py", line 27, in compute_loss
+    diff = predictions - targets
+ValueError: operands could not be broadcast together with shapes (32,10) (32,1,10)
