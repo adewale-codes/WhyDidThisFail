@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --surface: #f8fafc;
+  --foreground: #0f172a;
+  --muted: #64748b;
+  --border: #e2e8f0;
+
+  --brand: #4f46e5;
+  --brand-hover: #4338ca;
+
+  --pattern-bg: #ecfdf5;
+  --pattern-border: #a7f3d0;
+  --pattern-text: #047857;
+
+  --llm-bg: #f5f3ff;
+  --llm-border: #ddd6fe;
+  --llm-text: #6d28d9;
+
+  --code-bg: #f1f5f9;
+  --code-border: #e2e8f0;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+
+  --color-pattern-bg: var(--pattern-bg);
+  --color-pattern-border: var(--pattern-border);
+  --color-pattern-text: var(--pattern-text);
+
+  --color-llm-bg: var(--llm-bg);
+  --color-llm-border: var(--llm-border);
+  --color-llm-text: var(--llm-text);
+
+  --color-code-bg: var(--code-bg);
+  --color-code-border: var(--code-border);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* This is a deliberately light-only design system (shared with sibling
+   portfolio projects) -- no dark mode media query. */
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}

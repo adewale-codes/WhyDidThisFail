@@ -66,4 +66,11 @@ path actually produces a diagnosis end-to-end, set a real key and POST
 `sample_logs/unusual_error.txt` to `/diagnose` — the response should have
 `"source": "llm"` and a `cause` specific to the shape mismatch, not a
 pattern-matched answer.
-# WhyDidThisFail
+
+## Project layout
+
+This repo is built in phases, each a thin layer over the last:
+
+- `app/` — **Phase 1**: this API. All diagnosis logic lives here.
+- `cli/` — **Phase 2**: `npx whyfail`, a thin CLI client. See `cli/README.md`.
+- `web/` — **Phase 3**: the website (paste box + shareable result pages). See `web/README.md`.
