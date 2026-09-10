@@ -1,8 +1,14 @@
-# WhyDidThisFail? — Phase 1
+# WhyDidThisFail? — Phase 1 (+ Phase 4 format coverage)
 
 Core log-parsing engine and API. Detects the log format, extracts the real
 failure signal, matches it against a database of known errors, and falls
 back to Claude only when nothing matches confidently.
+
+Six formats are supported: Python tracebacks, npm/pnpm, Docker build
+output, GitHub Actions job logs, TypeScript compiler output, and Terraform
+plan/apply failures (the last three added in Phase 4, testing that the
+Phase 1 parser interface actually generalizes to formats with genuinely
+different shapes -- see `app/services/parsers/`).
 
 ## Setup
 
@@ -22,7 +28,7 @@ uvicorn app.main:app --reload
 `POST /diagnose`
 
 ```json
-{ "log": "<raw text>", "format_hint": "python | npm | docker (optional)" }
+{ "log": "<raw text>", "format_hint": "python | npm | docker | github_actions | typescript | terraform (optional)" }
 ```
 
 Response includes `detected_format`, `error_signal` (the extracted
@@ -38,34 +44,38 @@ curl -s localhost:8000/diagnose -H 'content-type: application/json' \
 
 ## Layout
 
-- `app/services/detector.py` — classifies raw log text as `python` / `npm` / `docker` / `unknown`.
+- `app/services/detector.py` — classifies raw log text as one of the six formats, or `unknown`. Order matters: a format that *wraps* another (Docker wrapping npm, a GitHub Actions job wrapping anything) is checked before the format it wraps.
 - `app/services/parsers/` — one parser per format, all returning a common `ParsedSignal`.
-- `app/services/patterns.py` — the known-error database (grows over time).
-- `app/services/llm_diagnose.py` — Claude fallback, forced structured JSON output via tool use.
+- `app/services/patterns.py` — the known-error database (28 patterns across 6 formats; grows over time).
+- `app/services/llm_diagnose.py` — Claude fallback, structured JSON output via `messages.parse()`.
 - `app/services/diagnose.py` — orchestrates detect → parse → pattern match → (maybe) LLM.
 
 ## Manual acceptance check
 
-`python scripts/manual_test.py` runs the three pattern-match paths fully
+`python scripts/manual_test.py` runs all six pattern-match paths fully
 offline (no API key needed) against real-shaped sample logs in
-`sample_logs/`, and confirms the deliberately unusual error
-(`unusual_error.txt`, a numpy broadcast `ValueError` that isn't in the
-pattern database) correctly finds no pattern match:
+`sample_logs/`, and confirms a deliberately unusual error per format
+correctly finds no pattern match:
 
 - `python_modulenotfound.txt` → detected `python`, matched `py-module-not-found`, no LLM call.
 - `npm_eresolve.txt` → detected `npm`, matched `npm-eresolve`, no LLM call.
 - `docker_run_fail.txt` (BuildKit `npm ci` failure) → detected `docker`, correctly identifies step `4/7` / command `npm ci`, matched `docker-npm-install`, no LLM call.
-- `unusual_error.txt` → detected `python`, no pattern matches, escalates to the LLM path.
+- `github_actions_failed_step.txt` (5 successful steps, one failing `github-script` step) → detected `github_actions`, correctly identifies the failing step (`actions/github-script@v7`) rather than just "something failed", matched `gh-resource-not-accessible`, no LLM call.
+- `typescript_cascade.txt` (1 root cause cascading into 3 downstream errors across 2 files) → detected `typescript`, surfaces the *first* diagnostic (`TS2307` in `src/types/user.ts`) as the primary signal rather than one of the 3 downstream `TS2339` errors it caused, matched `ts-cannot-find-module`, no LLM call.
+- `terraform_state_lock.txt` → detected `terraform`, matched `tf-state-lock`, no LLM call.
+- `unusual_error.txt`, `github_actions_unusual.txt`, `typescript_unusual.txt`, `terraform_unusual.txt` → each correctly finds no pattern match and would escalate to the LLM path.
 
-This was also verified end-to-end through the actual FastAPI endpoint (not
-just the internal functions) via `TestClient` — all three known cases return
-`"source": "pattern"` with the right `pattern_id`, and the unusual case
-correctly attempts the LLM call (it fails cleanly with a 502 in this
-sandbox since no `ANTHROPIC_API_KEY` is configured here). To confirm the LLM
-path actually produces a diagnosis end-to-end, set a real key and POST
-`sample_logs/unusual_error.txt` to `/diagnose` — the response should have
-`"source": "llm"` and a `cause` specific to the shape mismatch, not a
-pattern-matched answer.
+This was also verified end-to-end through the running FastAPI server (not
+just the internal functions) via real HTTP requests -- all six known cases
+return `"source": "pattern"` with the right `pattern_id`, and all four
+unusual cases correctly reach the LLM call (each fails cleanly with a 502
+in this environment because the configured `ANTHROPIC_API_KEY`'s account
+has an empty credit balance -- an account issue, not a code issue; the
+request/auth/detection/escalation pipeline is confirmed working up to and
+including the actual model call). To confirm a full LLM diagnosis
+end-to-end, use a key with available credit and POST any of the `*_unusual.txt`
+logs to `/diagnose` -- the response should have `"source": "llm"` and a
+`cause` specific to that log, not a pattern-matched answer.
 
 ## Project layout
 

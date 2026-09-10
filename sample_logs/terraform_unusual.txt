@@ -1,0 +1,7 @@
+╷
+│ Error: Cycle: aws_security_group.app, aws_security_group_rule.app_ingress, aws_security_group.app_lb
+│
+│ Terraform detected a dependency cycle while building the resource graph. This
+│ means two or more resources depend on each other in a way that cannot be
+│ resolved into a linear apply order.
+╵

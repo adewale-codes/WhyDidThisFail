@@ -1,0 +1,29 @@
+Initializing the backend...
+
+Initializing provider plugins...
+- Finding hashicorp/aws versions matching "~> 5.0"...
+- Installing hashicorp/aws v5.31.0...
+- Installed hashicorp/aws v5.31.0 (signed by HashiCorp)
+
+Terraform has been successfully initialized!
+
+Acquiring state lock. This may take a few moments...
+╷
+│ Error: Error acquiring the state lock
+│
+│ Error message: ConditionalCheckFailedException: The conditional request failed
+│ Lock Info:
+│   ID:        7f3a9c2e-1b4d-4e5f-9a6b-2c8d7e1f0a3b
+│   Path:      my-project/terraform.tfstate
+│   Operation: OperationTypeApply
+│   Who:       ci-runner@github-actions
+│   Version:   1.7.5
+│   Created:   2026-09-10 12:03:41.123456 UTC
+│   Info:
+│
+│
+│ Terraform acquires a state lock to protect the state from being written
+│ by multiple users at the same time. Please resolve the issue above and try
+│ again. For most commands, you can disable locking with the "-lock=false"
+│ flag, but this is not recommended.
+╵

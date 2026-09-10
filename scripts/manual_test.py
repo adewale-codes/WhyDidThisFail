@@ -1,6 +1,6 @@
 """Manual acceptance check against the sample logs (see README).
 
-Runs the pattern-match path fully offline. For the "unusual" log, it only
+Runs the pattern-match path fully offline. For each "unusual" log, it only
 confirms that no pattern matched (i.e. it *would* escalate to the LLM)
 without requiring ANTHROPIC_API_KEY, since that call needs network + a key.
 """
@@ -18,13 +18,23 @@ SAMPLES = {
     "python": "python_modulenotfound.txt",
     "npm": "npm_eresolve.txt",
     "docker": "docker_run_fail.txt",
+    "github_actions": "github_actions_failed_step.txt",
+    "typescript": "typescript_cascade.txt",
+    "terraform": "terraform_state_lock.txt",
+}
+
+UNUSUAL_SAMPLES = {
+    "python": "unusual_error.txt",
+    "github_actions": "github_actions_unusual.txt",
+    "typescript": "typescript_unusual.txt",
+    "terraform": "terraform_unusual.txt",
 }
 
 SAMPLE_DIR = pathlib.Path(__file__).resolve().parent.parent / "sample_logs"
 
 
 def check(name: str, filename: str, expected_format: str) -> None:
-    log = (SAMPLE_DIR / filename).read_text()
+    log = (SAMPLE_DIR / filename).read_text(encoding="utf-8")
     detected = detect_format(log)
     print(f"--- {name} ---")
     print(f"expected format: {expected_format} | detected: {detected}")
@@ -48,12 +58,12 @@ def check(name: str, filename: str, expected_format: str) -> None:
     print()
 
 
-def check_unusual() -> None:
-    log = (SAMPLE_DIR / "unusual_error.txt").read_text()
+def check_unusual(expected_format: str, filename: str) -> None:
+    log = (SAMPLE_DIR / filename).read_text(encoding="utf-8")
     detected = detect_format(log)
-    print("--- unusual (should fall through to LLM) ---")
+    print(f"--- unusual ({expected_format}, should fall through to LLM) ---")
     print(f"detected: {detected}")
-    assert detected == "python"
+    assert detected == expected_format, f"FAIL: expected {expected_format}, got {detected}"
     signal = PARSERS[detected].parse(log)
     print(f"error_type={signal.error_type!r} message={signal.message!r}")
     matched = match_pattern(signal)
@@ -66,5 +76,11 @@ if __name__ == "__main__":
     check("Python ModuleNotFoundError", SAMPLES["python"], "python")
     check("npm ERESOLVE", SAMPLES["npm"], "npm")
     check("Docker RUN failure (npm ci)", SAMPLES["docker"], "docker")
-    check_unusual()
+    check("GitHub Actions: failing step buried among successes", SAMPLES["github_actions"], "github_actions")
+    check("TypeScript: cascade of errors from one root cause", SAMPLES["typescript"], "typescript")
+    check("Terraform: state lock error", SAMPLES["terraform"], "terraform")
+
+    for fmt, filename in UNUSUAL_SAMPLES.items():
+        check_unusual(fmt, filename)
+
     print("All offline checks passed.")

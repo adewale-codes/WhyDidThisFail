@@ -1,0 +1,28 @@
+$ npx tsc --noEmit
+
+src/types/user.ts:3:29 - error TS2307: Cannot find module './permissions' or its corresponding type declarations.
+
+3 import { Permission } from './permissions';
+                              ~~~~~~~~~~~~~~~
+
+src/services/auth.ts:15:10 - error TS2339: Property 'role' does not exist on type 'User'.
+
+15   return user.role === 'admin';
+            ~~~~
+
+src/services/auth.ts:22:23 - error TS2339: Property 'permissions' does not exist on type 'User'.
+
+22   return user.permissions.includes(p);
+                 ~~~~~~~~~~~
+
+src/components/AdminPanel.tsx:8:32 - error TS2339: Property 'role' does not exist on type 'User'.
+
+8   if (currentUser.role !== 'admin') return null;
+                    ~~~~
+
+Found 4 errors in 3 files.
+
+Errors  Files
+     1  src/types/user.ts:3
+     2  src/services/auth.ts:15
+     1  src/components/AdminPanel.tsx:8

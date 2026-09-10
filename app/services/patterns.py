@@ -364,10 +364,398 @@ DOCKER_PATTERNS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# GitHub Actions
+# ---------------------------------------------------------------------------
+
+_MISSING_INPUT_RE = re.compile(r"Input required and not supplied:\s*(\S+)")
+
+
+def _match_gh_missing_input(signal: ParsedSignal):
+    return _MISSING_INPUT_RE.search(signal.message)
+
+
+def _build_gh_missing_input(signal: ParsedSignal, match: re.Match) -> dict:
+    input_name = match.group(1)
+    step = signal.extra.get("step")
+    return {
+        "cause": f"The action in this step requires an input named '{input_name}', but it wasn't provided.",
+        "explanation": (
+            "Actions declare required inputs in their action.yml. If a workflow calls the action "
+            f"without setting '{input_name}' (directly, or via a secret/variable that turned out to "
+            "be empty), the runner fails the step before the action's own code even runs."
+        ),
+        "fix": (
+            f"Add 'with: {input_name}: ...' to this step in the workflow file"
+            + (f" (step: {step})" if step else "")
+            + f", making sure any secret/variable it references is actually set for this repo/environment."
+        ),
+        "commands": [],
+    }
+
+
+def _match_gh_resource_not_accessible(signal: ParsedSignal):
+    return "Resource not accessible by integration" in signal.message
+
+
+def _build_gh_resource_not_accessible(signal: ParsedSignal, match) -> dict:
+    return {
+        "cause": "The GITHUB_TOKEN used by this workflow doesn't have permission to make this API call.",
+        "explanation": (
+            "Since GitHub's 2023 permission defaults, GITHUB_TOKEN is read-only unless the workflow "
+            "explicitly grants more. Actions that comment on PRs, push commits, create releases, or "
+            "otherwise write via the API fail with this error when the token's scope doesn't cover it."
+        ),
+        "fix": (
+            "Add a 'permissions:' block to the job (or workflow) granting the specific scope needed "
+            "(e.g. 'contents: write', 'pull-requests: write'), rather than broadly re-enabling "
+            "write-all."
+        ),
+        "commands": [],
+    }
+
+
+_BAD_ACTION_VERSION_RE = re.compile(r"Unable to resolve action `([^`]+)`")
+
+
+def _match_gh_bad_action_version(signal: ParsedSignal):
+    return _BAD_ACTION_VERSION_RE.search(signal.message)
+
+
+def _build_gh_bad_action_version(signal: ParsedSignal, match: re.Match) -> dict:
+    ref = match.group(1)
+    return {
+        "cause": f"The workflow references an action ('{ref}') at a version/tag that doesn't exist.",
+        "explanation": (
+            "This happens after a repo renames or deletes a tag/release the workflow pins to, or from "
+            "a typo in the version -- GitHub can't resolve the ref at checkout time, before the "
+            "action's own code ever runs."
+        ),
+        "fix": f"Check {ref.split('@')[0] if '@' in ref else ref}'s available tags/releases and pin to one that actually exists.",
+        "commands": [],
+    }
+
+
+def _match_gh_job_timeout(signal: ParsedSignal):
+    return "has exceeded the maximum execution time" in signal.message
+
+
+def _build_gh_job_timeout(signal: ParsedSignal, match) -> dict:
+    return {
+        "cause": "The job ran longer than its allowed execution time and was killed by the runner.",
+        "explanation": (
+            "Every job has a timeout (default 360 minutes, or whatever 'timeout-minutes' is set to). "
+            "This usually means a step is hanging -- waiting on input, a deadlocked test, an "
+            "unresponsive network call -- rather than the workflow being legitimately slow."
+        ),
+        "fix": (
+            "Find which step was actually running when it was killed and fix why it hangs; only raise "
+            "'timeout-minutes' once you're confident the job is meant to take that long."
+        ),
+        "commands": [],
+    }
+
+
+def _match_gh_push_denied(signal: ParsedSignal):
+    # The actual "remote: Permission to ... denied" line comes from git
+    # itself, printed *before* the runner's generic "##[error]Process
+    # completed..." line -- so it's in the step's context, not the message.
+    text = f"{signal.message}\n{signal.context}"
+    return re.search(r"Permission to .* denied to", text) or "denied to github-actions" in text
+
+
+def _build_gh_push_denied(signal: ParsedSignal, match) -> dict:
+    return {
+        "cause": "The workflow tried to push/write to the repository with a token that isn't allowed to.",
+        "explanation": (
+            "The default GITHUB_TOKEN is scoped to the triggering repo and, since 2023, defaults to "
+            "read-only. A step running 'git push' (or an action that pushes on your behalf) fails "
+            "with this permission error unless the token's write scope was explicitly granted."
+        ),
+        "fix": (
+            "Grant 'contents: write' under 'permissions:' for this job, or use a PAT/deploy key with "
+            "push access if pushing to a different repository."
+        ),
+        "commands": [],
+    }
+
+
+GITHUB_ACTIONS_PATTERNS = [
+    Pattern("gh-missing-input", "github_actions", "Required action input not supplied",
+            _match_gh_missing_input, _build_gh_missing_input),
+    Pattern("gh-resource-not-accessible", "github_actions", "GITHUB_TOKEN lacks required permission",
+            _match_gh_resource_not_accessible, _build_gh_resource_not_accessible),
+    Pattern("gh-bad-action-version", "github_actions", "Referenced action version/tag doesn't exist",
+            _match_gh_bad_action_version, _build_gh_bad_action_version),
+    Pattern("gh-job-timeout", "github_actions", "Job exceeded its maximum execution time",
+            _match_gh_job_timeout, _build_gh_job_timeout),
+    Pattern("gh-push-denied", "github_actions", "git push denied due to token permissions",
+            _match_gh_push_denied, _build_gh_push_denied),
+]
+
+
+# ---------------------------------------------------------------------------
+# TypeScript
+# ---------------------------------------------------------------------------
+
+_TS_CANNOT_FIND_MODULE_RE = re.compile(r"Cannot find module '([^']+)'")
+
+
+def _match_ts_cannot_find_module(signal: ParsedSignal):
+    return signal.error_type == "TS2307" and _TS_CANNOT_FIND_MODULE_RE.search(signal.message)
+
+
+def _build_ts_cannot_find_module(signal: ParsedSignal, match: re.Match) -> dict:
+    module = match.group(1)
+    is_relative = module.startswith(".")
+    return {
+        "cause": f"TypeScript can't find '{module}' or type declarations for it.",
+        "explanation": (
+            "For a relative import, the file doesn't exist at that path. For a package import, "
+            "either the package isn't installed, or it has no bundled types and no matching "
+            "'@types/...' package is installed either."
+        ),
+        "fix": (
+            "Check the path is correct and the file exists."
+            if is_relative
+            else f"Install the package, and if it has no bundled types, install '@types/{module}' as well."
+        ),
+        "commands": (
+            []
+            if is_relative
+            else [f"npm install {module}", f"npm install --save-dev @types/{module}"]
+        ),
+    }
+
+
+_TS_CANNOT_FIND_NAME_RE = re.compile(r"Cannot find name '([^']+)'")
+
+
+def _match_ts_cannot_find_name(signal: ParsedSignal):
+    return signal.error_type == "TS2304" and _TS_CANNOT_FIND_NAME_RE.search(signal.message)
+
+
+def _build_ts_cannot_find_name(signal: ParsedSignal, match: re.Match) -> dict:
+    name = match.group(1)
+    return {
+        "cause": f"'{name}' is used but never declared, imported, or brought into scope by an @types package.",
+        "explanation": (
+            f"TypeScript has no declaration for '{name}' anywhere it can see. This is usually a "
+            "missing import, a typo in the name, or a missing global type (e.g. DOM or Node types) "
+            "that needs its @types package listed in tsconfig's \"types\"/\"lib\"."
+        ),
+        "fix": f"Import '{name}' from wherever it's actually defined, fix the typo, or install the @types package that declares it.",
+        "commands": [],
+    }
+
+
+_TS_PROPERTY_MISSING_RE = re.compile(r"Property '([^']+)' does not exist on type '([^']+)'")
+
+
+def _match_ts_property_missing(signal: ParsedSignal):
+    return signal.error_type == "TS2339" and _TS_PROPERTY_MISSING_RE.search(signal.message)
+
+
+def _build_ts_property_missing(signal: ParsedSignal, match: re.Match) -> dict:
+    prop, type_name = match.group(1), match.group(2)
+    return {
+        "cause": f"Code accesses '.{prop}' on a value TypeScript has typed as '{type_name}', which has no such property.",
+        "explanation": (
+            "Either the type definition is missing that property (an interface/type that's out of "
+            f"date with the real shape of the data), or '{prop}' is a typo for a property that does "
+            "exist, or the value's inferred type is narrower than what's actually at runtime."
+        ),
+        "fix": f"Add '{prop}' to the type/interface if it's genuinely supposed to be there, or fix the typo.",
+        "commands": [],
+    }
+
+
+def _match_ts_implicit_any(signal: ParsedSignal):
+    return signal.error_type == "TS7006"
+
+
+_TS_IMPLICIT_ANY_PARAM_RE = re.compile(r"Parameter '([^']+)' implicitly has an 'any' type")
+
+
+def _build_ts_implicit_any(signal: ParsedSignal, match) -> dict:
+    m = _TS_IMPLICIT_ANY_PARAM_RE.search(signal.message)
+    param = m.group(1) if m else "this parameter"
+    return {
+        "cause": f"'{param}' has no type annotation and TypeScript couldn't infer one, so it fell back to 'any' -- which noImplicitAny treats as an error.",
+        "explanation": (
+            "This is intentional strictness: an un-annotated, uninferrable parameter silently loses "
+            "type checking for anything derived from it. It usually shows up on callback parameters "
+            "whose type TypeScript can't infer from context."
+        ),
+        "fix": f"Add an explicit type annotation to '{param}' (or to the function it belongs to so TypeScript can infer it via context).",
+        "commands": [],
+    }
+
+
+_TS_TYPE_NOT_ASSIGNABLE_RE = re.compile(r"Type '([^']+)' is not assignable to type '([^']+)'")
+
+
+def _match_ts_type_not_assignable(signal: ParsedSignal):
+    return signal.error_type == "TS2322" and _TS_TYPE_NOT_ASSIGNABLE_RE.search(signal.message)
+
+
+def _build_ts_type_not_assignable(signal: ParsedSignal, match: re.Match) -> dict:
+    src, dst = match.group(1), match.group(2)
+    return {
+        "cause": f"A value of type '{src}' is being assigned where type '{dst}' is required.",
+        "explanation": (
+            "This is TypeScript's core type check doing its job -- somewhere the actual shape of a "
+            "value (from an API response, a default value, a cast, or a prop) doesn't match what the "
+            "receiving variable/parameter/field declares."
+        ),
+        "fix": (
+            f"Fix the mismatch at the source (produce a real '{dst}' instead of a '{src}'), or narrow/"
+            "convert the value explicitly if the mismatch is only apparent, not real."
+        ),
+        "commands": [],
+    }
+
+
+TYPESCRIPT_PATTERNS = [
+    Pattern("ts-cannot-find-module", "typescript", "TS2307: Cannot find module or its types",
+            _match_ts_cannot_find_module, _build_ts_cannot_find_module),
+    Pattern("ts-cannot-find-name", "typescript", "TS2304: Cannot find name",
+            _match_ts_cannot_find_name, _build_ts_cannot_find_name),
+    Pattern("ts-property-missing", "typescript", "TS2339: Property does not exist on type",
+            _match_ts_property_missing, _build_ts_property_missing),
+    Pattern("ts-implicit-any", "typescript", "TS7006: Parameter implicitly has an 'any' type",
+            _match_ts_implicit_any, _build_ts_implicit_any),
+    Pattern("ts-type-not-assignable", "typescript", "TS2322: Type is not assignable",
+            _match_ts_type_not_assignable, _build_ts_type_not_assignable),
+]
+
+
+# ---------------------------------------------------------------------------
+# Terraform
+# ---------------------------------------------------------------------------
+
+def _match_tf_state_lock(signal: ParsedSignal):
+    return "Error acquiring the state lock" in signal.message
+
+
+def _build_tf_state_lock(signal: ParsedSignal, match) -> dict:
+    return {
+        "cause": "Another Terraform run (or a crashed one) is already holding the state lock.",
+        "explanation": (
+            "Terraform locks remote state before writing to it so concurrent runs can't corrupt it. "
+            "This fires when another apply is genuinely in progress, or a previous run crashed/was "
+            "killed without releasing the lock it held."
+        ),
+        "fix": (
+            "Confirm no other apply is actually running, then release the stale lock using the lock "
+            "ID from the error output. Don't use -lock=false as a routine workaround."
+        ),
+        "commands": ["terraform force-unlock <lock ID from the error output>"],
+    }
+
+
+def _match_tf_unsupported_argument(signal: ParsedSignal):
+    return signal.message.strip() == "Unsupported argument"
+
+
+_TF_ARG_DETAIL_RE = re.compile(r'An argument named "([^"]+)" is not expected here(?:\. Did you mean "([^"]+)"\?)?')
+
+
+def _build_tf_unsupported_argument(signal: ParsedSignal, match) -> dict:
+    m = _TF_ARG_DETAIL_RE.search(signal.context)
+    arg = m.group(1) if m else None
+    suggestion = m.group(2) if m and m.group(2) else None
+    return {
+        "cause": (
+            f"'{arg}' isn't a valid argument for this resource/block."
+            if arg
+            else "An argument used in this block isn't valid for it."
+        ),
+        "explanation": (
+            "This is a straightforward config typo or a mismatch against the provider schema -- "
+            "usually the argument was renamed in a provider version bump, or was simply mistyped."
+            + (f" Terraform itself suggests '{suggestion}'." if suggestion else "")
+        ),
+        "fix": (
+            f"Rename '{arg}' to '{suggestion}'."
+            if arg and suggestion
+            else "Check the resource's documentation for the provider version you're pinned to and fix the argument name."
+        ),
+        "commands": [],
+    }
+
+
+def _match_tf_provider_credentials(signal: ParsedSignal):
+    text = f"{signal.message}\n{signal.context}"
+    return "no valid credential sources" in text or "NoCredentialProviders" in text
+
+
+def _build_tf_provider_credentials(signal: ParsedSignal, match) -> dict:
+    return {
+        "cause": "The provider (e.g. AWS/GCP/Azure) couldn't find any valid credentials in this environment.",
+        "explanation": (
+            "Terraform's provider block needs credentials from somewhere -- environment variables, a "
+            "shared credentials file, an instance/role profile, or explicit provider config -- and "
+            "none of the sources it checked had anything usable."
+        ),
+        "fix": "Set the provider's expected credential environment variables (or configure a credentials file/profile) before running terraform.",
+        "commands": [],
+    }
+
+
+def _match_tf_already_exists(signal: ParsedSignal):
+    return "already exists" in signal.message
+
+
+def _build_tf_already_exists(signal: ParsedSignal, match) -> dict:
+    return {
+        "cause": "Terraform is trying to create a resource that already exists outside of its state.",
+        "explanation": (
+            "This happens when a resource was created manually, by another tool, or by a previous "
+            "apply whose state was lost/not committed -- Terraform doesn't know about it, so it tries "
+            "to create it again and the provider rejects the duplicate."
+        ),
+        "fix": (
+            "Import the existing resource into Terraform's state instead of letting it try to "
+            "recreate it, or rename/remove the pre-existing resource if it shouldn't exist."
+        ),
+        "commands": ["terraform import <resource address> <existing resource ID>"],
+    }
+
+
+def _match_tf_undeclared_reference(signal: ParsedSignal):
+    return "Reference to undeclared resource" in signal.message or "has not been declared" in signal.message
+
+
+def _build_tf_undeclared_reference(signal: ParsedSignal, match) -> dict:
+    return {
+        "cause": "A resource, module, or variable is referenced that doesn't exist under that name.",
+        "explanation": (
+            "Usually a typo in the reference, a resource that was renamed or removed elsewhere in the "
+            "config without updating everything that pointed to it, or a reference to a resource "
+            "inside a module without the module prefix."
+        ),
+        "fix": "Fix the reference to match the actual resource/module/variable name declared in the config.",
+        "commands": [],
+    }
+
+
+TERRAFORM_PATTERNS = [
+    Pattern("tf-state-lock", "terraform", "State lock already held", _match_tf_state_lock, _build_tf_state_lock),
+    Pattern("tf-unsupported-argument", "terraform", "Unsupported/typo'd argument", _match_tf_unsupported_argument, _build_tf_unsupported_argument),
+    Pattern("tf-provider-credentials", "terraform", "No valid provider credentials found", _match_tf_provider_credentials, _build_tf_provider_credentials),
+    Pattern("tf-already-exists", "terraform", "Resource already exists outside state", _match_tf_already_exists, _build_tf_already_exists),
+    Pattern("tf-undeclared-reference", "terraform", "Reference to an undeclared resource/module", _match_tf_undeclared_reference, _build_tf_undeclared_reference),
+]
+
+
 PATTERNS_BY_FORMAT: dict[str, list[Pattern]] = {
     "python": PYTHON_PATTERNS,
     "npm": NPM_PATTERNS,
     "docker": DOCKER_PATTERNS,
+    "github_actions": GITHUB_ACTIONS_PATTERNS,
+    "typescript": TYPESCRIPT_PATTERNS,
+    "terraform": TERRAFORM_PATTERNS,
 }
 
 

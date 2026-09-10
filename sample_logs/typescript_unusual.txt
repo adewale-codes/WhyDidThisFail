@@ -1,0 +1,15 @@
+src/api/client.ts:42:12 - error TS2769: No overload matches this call.
+  Overload 1 of 3, '(url: string, config?: RequestConfig | undefined): Promise<Response>', gave the following error.
+    Argument of type '{ retries: number; timeout: string; }' is not assignable to parameter of type 'RequestConfig'.
+      Types of property 'timeout' are incompatible.
+        Type 'string' is not assignable to type 'number'.
+  Overload 2 of 3, '(url: URL, config?: RequestConfig | undefined): Promise<Response>', gave the following error.
+    Argument of type 'string' is not assignable to parameter of type 'URL'.
+
+42 fetchWithRetry(endpoint, { retries: 3, timeout: '5000' });
+              ~~~~~~~~~~~~
+
+Found 1 error in 1 file.
+
+Errors  Files
+     1  src/api/client.ts:42

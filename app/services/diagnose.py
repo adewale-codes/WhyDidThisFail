@@ -4,14 +4,20 @@ from .detector import SUPPORTED_FORMATS, detect_format
 from .llm_diagnose import diagnose_with_llm
 from .parsers.base import ParsedSignal
 from .parsers.docker import DockerParser
+from .parsers.github_actions import GithubActionsParser
 from .parsers.npm import NpmParser
 from .parsers.python_traceback import PythonTracebackParser
+from .parsers.terraform import TerraformParser
+from .parsers.typescript import TypeScriptParser
 from .patterns import match_pattern
 
 PARSERS = {
     "python": PythonTracebackParser(),
     "npm": NpmParser(),
     "docker": DockerParser(),
+    "github_actions": GithubActionsParser(),
+    "typescript": TypeScriptParser(),
+    "terraform": TerraformParser(),
 }
 
 

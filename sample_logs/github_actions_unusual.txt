@@ -1,0 +1,7 @@
+##[group]Run actions/upload-artifact@v2
+  with:
+    name: build-output
+    path: dist/
+##[endgroup]
+##[error]This request has been automatically failed because it uses a deprecated version of `actions/upload-artifact: v2`. Learn more: https://github.blog/changelog/2024-04-16-deprecation-notice-v3-of-the-artifact-actions/
+##[error]Process completed with exit code 1.
