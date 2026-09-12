@@ -1,0 +1,27 @@
+# This repo has three separate Node projects (cli/, web/, action/) alongside
+# the Python backend. Only requirements.txt and app/ are ever COPYed into
+# the backend image, but without this file Docker still tars up and sends
+# the *entire* build context (repo root) to the daemon before evaluating
+# any COPY instruction -- so excluding their node_modules/build output here
+# is what actually keeps `docker build` fast, not the Dockerfile's COPY list.
+
+.git
+.gitignore
+.env
+.env.local
+*.md
+
+**/node_modules/
+**/__pycache__/
+**/*.pyc
+.venv/
+venv/
+
+web/.next/
+web/data/
+web/.env.local
+
+action/test/
+
+sample_logs/
+scripts/
