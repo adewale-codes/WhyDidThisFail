@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Read(//c/Users/adewa/anaconda3/Lib/site-packages/anthropic/lib/_parse//**)",
+      "Read(//c/Users/adewa/anaconda3/Lib/site-packages/anthropic/lib/_parse/**)",
+      "Bash(python _diagnose_truncation.py)",
+      "Bash(ANTHROPIC_MODEL=claude-opus-5 python _diagnose_truncation.py)",
+      "Bash(python -m py_compile app/services/llm_diagnose.py)",
+      "Bash(PYTHONIOENCODING=utf-8 python scripts/manual_test.py)"
+    ]
+  }
+}
