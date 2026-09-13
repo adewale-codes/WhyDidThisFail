@@ -1,0 +1,79 @@
+# .github/workflows/test-action.yml
+#
+# A deliberately-failing workflow to prove the WhyDidThisFail? Action
+# works end to end: real failure -> real logs -> real diagnosis ->
+# real posted comment. Safe to leave in the repo (or delete once
+# confirmed working) since it only runs on manual trigger.
+#
+# This is also the only way to answer the single open question from
+# action/README.md's Testing section: whether a job's own logs are
+# actually retrievable via the API while that job is still in progress
+# (the exact situation `if: failure()` runs in). Nothing in local
+# simulation could confirm that -- this workflow is the real test.
+
+name: Test WhyDidThisFail Action
+
+on:
+  workflow_dispatch:  # manual trigger only, won't run on every push
+
+# The action posts a PR comment when one is associated with the failing
+# commit, otherwise falls back to a commit comment -- action/README.md's
+# documented permissions block covers the PR path explicitly but a commit
+# comment also needs contents:write, so it's included here too since a
+# workflow_dispatch run on a branch with no open PR will hit that fallback.
+permissions:
+  contents: write
+  actions: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  deliberately-fail:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: This step will fail on purpose
+        run: |
+          python -c "import definitely_not_a_real_package_xyz"
+
+      # The action's own node_modules (@actions/core, @actions/github) is
+      # gitignored, not committed -- `uses: ./action` runs src/index.js
+      # directly against the checked-out repo, so without this install
+      # step it fails immediately with "Cannot find module '@actions/core'".
+      - name: Install action dependencies
+        if: failure()
+        run: npm ci
+        working-directory: action
+
+      - name: Diagnose the failure
+        if: failure()
+        uses: ./action
+        with:
+          # whyfail-api-url (not api-url -- confirmed against action.yml).
+          # Point this at your real deployed backend; a GitHub-hosted
+          # runner can't reach localhost:8000. Update this if
+          # whydidthisfail-production.up.railway.app isn't actually your
+          # deployed URL -- it wasn't verified against any Railway config
+          # in this repo, it's carried over from the draft as given.
+          whyfail-api-url: https://whydidthisfail-production.up.railway.app
+
+          # github-token: confirmed required-ish (action.yml defaults it to
+          # ${{ github.token }} already, so this line is technically
+          # redundant, but kept explicit since the draft called it out).
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+          # whyfail-cli: NOT left at its default. action.yml's default is
+          # `npx --yes whyfail@latest`, but the whyfail CLI has never been
+          # published to npm (see cli/README.md / action/README.md) -- on
+          # a real runner that either 404s or, worse, silently installs
+          # and runs whatever unrelated package (if any) actually holds
+          # that name on the real npm registry. Point it at the CLI
+          # already sitting in this checkout instead, same override
+          # action/test/simulate.js uses locally.
+          whyfail-cli: "node ${{ github.workspace }}/cli/bin/cli.js"
