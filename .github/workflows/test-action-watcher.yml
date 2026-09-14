@@ -1,0 +1,52 @@
+# .github/workflows/test-action-watcher.yml
+#
+# The "diagnoses it" half of testing the workflow_run pattern for real --
+# see test-action-target.yml for the failing workflow this watches, and
+# action/README.md's "Plan for re-testing workflow_run against a real
+# repo" for the full plan this implements.
+#
+# `workflows:` below must match test-action-target.yml's `name:` exactly.
+
+name: Test WhyDidThisFail Action - watcher
+
+on:
+  workflow_run:
+    workflows: ["Test WhyDidThisFail Action - target"]
+    types: [completed]
+
+# See action/README.md's Permissions section: contents:write covers the
+# commit-comment fallback (expected here -- a workflow_dispatch run on a
+# branch with no open PR has nothing to attach a PR comment to).
+permissions:
+  contents: write
+  actions: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  diagnose:
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      # Checks out the watcher's own ref (this repo's default branch), not
+      # the target run's -- that's what we want, since all we need from the
+      # checkout is the action/ and cli/ code, not the target commit itself.
+      - uses: actions/checkout@v4
+
+      # Same reason as the target workflow's old diagnosis step: action/'s
+      # node_modules is gitignored, not committed.
+      - name: Install action dependencies
+        run: npm ci
+        working-directory: action
+
+      - name: Diagnose the failed run
+        uses: ./action
+        with:
+          # Same caveat as before: not verified against any Railway config
+          # in this repo -- confirm this is actually your deployed URL.
+          whyfail-api-url: https://whydidthisfail-production.up.railway.app
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Same reason as before: whyfail was never published to npm, so
+          # action.yml's default (npx --yes whyfail@latest) would either
+          # 404 or run an unrelated package with that name.
+          whyfail-cli: "node ${{ github.workspace }}/cli/bin/cli.js"

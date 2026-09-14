@@ -1,0 +1,32 @@
+# .github/workflows/test-action-target.yml
+#
+# The "thing that fails" half of testing the workflow_run pattern for real
+# (see test-action-watcher.yml for the "diagnoses it" half, and
+# action/README.md's "Plan for re-testing workflow_run against a real
+# repo" for why this is split into two files).
+#
+# Deliberately has NO diagnosis step -- an earlier version of this repo's
+# testing had a step here with `if: failure()` calling the action directly
+# on its own still-running job. That's now confirmed to be a hard GitHub
+# API limitation (see action/README.md, "Why if: failure() doesn't work"),
+# not something this workflow should keep exercising.
+
+name: Test WhyDidThisFail Action - target
+
+on:
+  workflow_dispatch:  # manual trigger only, won't run on every push
+
+jobs:
+  deliberately-fail:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: This step will fail on purpose
+        run: |
+          python -c "import definitely_not_a_real_package_xyz"

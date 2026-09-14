@@ -7,15 +7,40 @@ const { sanitizeLog } = require('./sanitize');
 const { findCurrentJob, findFailedJobs, fetchJobLogText } = require('./fetch-logs');
 const { runDiagnosis, getShareUrl } = require('./run-diagnosis');
 const { buildCommentBody, postComment } = require('./post-comment');
+const { describeError } = require('./errors');
 
 /**
  * Diagnoses a single failed job and posts a comment for it. Shared by both
  * trigger patterns (if: failure() has exactly one job to handle; workflow_run
  * may have several).
+ *
+ * @param {boolean} isSelfFetch - true for the if: failure() pattern (fetching
+ *   the *current*, still-executing job's own logs). Confirmed against GitHub's
+ *   real API behavior (see action/README.md's "Why if: failure() doesn't work"
+ *   section) that this always 404s: a job can only reach status "completed"
+ *   after every one of its own steps finishes, including this diagnosis step
+ *   itself, so the job-logs endpoint necessarily still sees it as in-progress.
+ *   Used only to turn a resulting 404 into an explanation instead of a bare
+ *   status code.
  */
-async function diagnoseAndPostForJob(octokit, repo, job, sha, options) {
+async function diagnoseAndPostForJob(octokit, repo, job, sha, options, isSelfFetch = false) {
   core.info(`Fetching logs for job "${job.name}" (id ${job.id})...`);
-  const rawLog = await fetchJobLogText(octokit, repo, job.id);
+
+  let rawLog;
+  try {
+    rawLog = await fetchJobLogText(octokit, repo, job.id);
+  } catch (err) {
+    if (isSelfFetch && err && err.status === 404) {
+      throw new Error(
+        `Could not fetch this job's own logs (${describeError(err)}). This is a confirmed GitHub API ` +
+          'limitation, not a bug in this action: job logs are unavailable via the API until the job ' +
+          'reaches "completed" status, and a step running with "if: failure()" is, by definition, still ' +
+          'part of a job that has not completed yet (it can\'t, until this very step finishes). Use the ' +
+          'workflow_run trigger pattern instead -- see action/README.md.'
+      );
+    }
+    throw err;
+  }
 
   const { sanitized, redactionCount } = sanitizeLog(rawLog);
   if (redactionCount > 0) {
@@ -76,8 +101,12 @@ async function run(overrides = {}) {
         posted = true;
       }
     } else {
-      // Primary pattern: this step runs with `if: failure()` inside the
-      // same job that just failed.
+      // Self-fetch pattern: this step runs with `if: failure()` inside the
+      // same job that just failed. Confirmed unreliable -- see
+      // diagnoseAndPostForJob's isSelfFetch handling and action/README.md.
+      // Kept working (rather than removed) in case a specific setup somehow
+      // avoids the limitation, but no longer the documented/recommended
+      // usage; workflow_run is.
       const jobName = process.env.GITHUB_JOB;
       const job = await findCurrentJob(octokit, repo, context.runId, jobName, process.env.RUNNER_NAME);
 
@@ -86,17 +115,17 @@ async function run(overrides = {}) {
         return;
       }
 
-      await diagnoseAndPostForJob(octokit, repo, job, context.sha, options);
+      await diagnoseAndPostForJob(octokit, repo, job, context.sha, options, /* isSelfFetch */ true);
       posted = true;
     }
 
     core.setOutput('posted', String(posted));
   } catch (err) {
-    core.setFailed(err instanceof Error ? err.message : String(err));
+    core.setFailed(describeError(err));
   }
 }
 
-module.exports = { run, diagnoseAndPostForJob };
+module.exports = { run, diagnoseAndPostForJob, describeError };
 
 if (require.main === module) {
   run();

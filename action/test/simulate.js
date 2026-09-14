@@ -12,11 +12,19 @@
  * decision -> which octokit method gets called with what body.
  *
  * What this does NOT and CANNOT prove (see action/README.md's Testing
- * section for the full list): whether GitHub's real API actually returns
- * complete logs for a job that's still in progress (the exact situation
- * `if: failure()` runs in), the real shape of `downloadJobLogsForWorkflowRun`'s
- * redirect-following response, real PR-association lookup behavior, or
- * how the comment actually renders on github.com. Those need a real repo.
+ * section for the full list): the real shape of
+ * `downloadJobLogsForWorkflowRun`'s redirect-following response for an
+ * *actually completed* run, real PR-association lookup behavior, or how
+ * the comment actually renders on github.com. Those need a real repo.
+ *
+ * NOT on that list anymore: whether GitHub's API returns logs for a job
+ * that's still in progress (the `if: failure()` self-fetch situation). A
+ * real repo test answered that -- it reliably 404s, confirmed both by
+ * real-world reports and by the job-completion lifecycle itself (a job
+ * can't reach "completed" while one of its own steps, this one, is still
+ * running). See action/README.md's "Why if: failure() doesn't work".
+ * testSelfFetch404GetsExplained() below covers the resulting error
+ * handling; it can't and doesn't re-prove the underlying API behavior.
  *
  * Requires the Phase 1 API running locally (see repo root README) --
  * this intentionally does NOT mock that part, since it already exists and
@@ -238,11 +246,73 @@ async function testShareLink() {
   console.log('PASS\n');
 }
 
+async function testDescribeErrorSurfacesDetail() {
+  console.log('--- Test: describeError no longer collapses to bare "Unknown error" ---');
+  const { describeError } = require('../src/errors.js');
+
+  // Reproduces the exact shape reported from the real repo test: an Octokit
+  // RequestError whose .message is the unhelpful literal "Unknown error",
+  // which the old `err.message`-only logging surfaced as-is.
+  const err = new Error('Unknown error');
+  err.status = 404;
+  err.response = { data: { message: 'Not Found', documentation_url: 'https://docs.github.com/rest' } };
+
+  const described = describeError(err);
+  assert.ok(described.includes('status=404'), 'FAIL: status code not surfaced');
+  assert.ok(described.includes('Not Found'), 'FAIL: response body detail not surfaced');
+  console.log('  ', described);
+  console.log('PASS\n');
+}
+
+async function testSelfFetch404GetsExplained() {
+  console.log('--- Test: if: failure() self-fetch 404 is explained, not left as a bare status code ---');
+  const { diagnoseAndPostForJob } = require('../src/index.js');
+
+  const octokit = {
+    rest: {
+      actions: {
+        async downloadJobLogsForWorkflowRun() {
+          const err = new Error('Unknown error');
+          err.status = 404;
+          throw err;
+        },
+      },
+    },
+  };
+
+  await assert.rejects(
+    () => diagnoseAndPostForJob(octokit, { owner: 'my-org', repo: 'my-repo' }, JOB, 'sha', {}, /* isSelfFetch */ true),
+    (err) => {
+      assert.ok(err.message.includes('confirmed GitHub API'), 'FAIL: missing the known-limitation explanation');
+      assert.ok(err.message.includes('workflow_run'), 'FAIL: missing the pointer to the working pattern');
+      assert.ok(err.message.includes('status=404'), 'FAIL: original error detail should still be included');
+      console.log('  ', err.message);
+      return true;
+    }
+  );
+
+  // The same 404 in workflow_run mode (isSelfFetch=false) should NOT get
+  // the self-fetch explanation grafted on -- it's a different situation
+  // (an already-completed run's job logs failing would be a real, separate
+  // problem, not this structural limitation) and shouldn't be misdiagnosed.
+  await assert.rejects(
+    () => diagnoseAndPostForJob(octokit, { owner: 'my-org', repo: 'my-repo' }, JOB, 'sha', {}, /* isSelfFetch */ false),
+    (err) => {
+      assert.ok(!err.message.includes('confirmed GitHub API'), 'FAIL: should not misapply the self-fetch explanation');
+      return true;
+    }
+  );
+  console.log('  correctly does not misapply the explanation when isSelfFetch is false');
+  console.log('PASS\n');
+}
+
 async function main() {
   await testPrCommentPath();
   await testCommitCommentFallback();
   await testWorkflowRunPattern();
   await testShareLink();
+  await testDescribeErrorSurfacesDetail();
+  await testSelfFetch404GetsExplained();
   console.log('All simulated tests passed.');
 }
 

@@ -11,39 +11,10 @@ job's log, sanitizes it, shells out to the Phase 2 `whyfail` CLI (which
 calls the Phase 1 API), and posts the result. See "Sanitization" below for
 why the sanitizing step matters even though the CLI is reused.
 
-## Usage (primary pattern: add as the last step of an existing job)
+## Usage (primary pattern: a separate watcher workflow)
 
-This is the easiest way to add this to a workflow you already have: one
-step, at the end of an existing job, that only runs when something above
-it failed.
-
-```yaml
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: npm ci
-      - run: npm test
-
-      # Add this as the last step. It only runs if a previous step failed,
-      # and needs no extra permissions beyond what GITHUB_TOKEN already has
-      # by default in most repos (see Permissions below).
-      - if: failure()
-        uses: your-org/whydidthisfail-action@v1
-        with:
-          website-url: https://whyfail.example.com  # optional, for a shareable link
-```
-
-That's it. No second workflow file, no watching for other workflows to
-finish -- when this job fails, this step runs, finds its own job's logs,
-diagnoses them, and comments.
-
-## Usage (alternative pattern: a separate watcher workflow)
-
-If you'd rather not touch existing workflow files, or you want to diagnose
-failures across *every* workflow in the repo from one place, add a second
-workflow that watches for `workflow_run` completions:
+Add one workflow file that watches for other workflows completing, and
+diagnoses any that failed:
 
 ```yaml
 # .github/workflows/diagnose-failures.yml
@@ -60,14 +31,49 @@ jobs:
     steps:
       - uses: your-org/whydidthisfail-action@v1
         with:
-          website-url: https://whyfail.example.com
+          website-url: https://whyfail.example.com   # optional, for a shareable link
 ```
 
-This pattern can diagnose more than one failed job per run (every job that
-failed in the watched run gets its own comment), but it requires adding
-and maintaining a second workflow file -- prefer the `if: failure()`
-pattern above unless you specifically need to watch workflows you don't
-want to edit directly.
+No changes to any existing workflow file are needed -- this watches
+everything (or specific named workflows) from one place, and correctly
+handles a run with more than one failed job (each gets its own comment).
+This is the only pattern confirmed to work reliably; see below.
+
+## Usage (do NOT use: `if: failure()` self-fetch)
+
+An earlier version of this Action recommended adding a step with
+`if: failure()` directly inside the job you want diagnosed, so it could
+fetch and diagnose its own job's logs with no second workflow file. **This
+does not work, and can't be made to work** -- confirmed against a real
+GitHub repo and GitHub's actual API behavior, not assumed. See "Why
+`if: failure()` doesn't work" below before considering it. The code path
+still exists (`fetch-logs.js`'s `findCurrentJob`) but is not a supported or
+documented usage; it will reliably fail with a 404, now with a clear
+explanation instead of a bare `Unknown error`.
+
+### Why `if: failure()` doesn't work
+
+Fetching job logs via `GET /repos/{owner}/{repo}/actions/jobs/{job_id}/logs`
+(`downloadJobLogsForWorkflowRun` in Octokit) requires the job to have
+reached `completed` status. GitHub's own docs don't state this explicitly,
+but real-world reports do: the API returns a plain `404` while a job is
+still `in_progress` ([community report, confirmed 404-while-running,
+resolves after completion](https://github.com/orgs/community/discussions/154834)).
+
+That alone would just make this *flaky*. What makes it a hard, unconditional
+limitation is a step further: a job can only reach `completed` status after
+*every one of its own steps finishes* -- including a diagnosis step running
+with `if: failure()` inside that same job. That step is, by definition,
+still executing while the job is `in_progress`. So the job it wants its own
+logs for can never have reached `completed` yet, at the exact moment it
+asks. This isn't timing-sensitive or occasionally unlucky; it fails every
+time, for every job, unconditionally, as a direct consequence of how "job
+completion" is defined -- not something a retry or a delay works around.
+
+`workflow_run` fires on a *different* run's completion (the one you're
+watching, not the watcher's own run), so by the time the watcher job asks
+for that run's job logs, they're genuinely finalized. That's the entire
+reason it's the primary pattern now.
 
 ## Inputs
 
@@ -91,7 +97,7 @@ The default `GITHUB_TOKEN` needs:
 
 ```yaml
 permissions:
-  contents: read
+  contents: write        # read for checkout; write is needed for the commit-comment fallback
   actions: read          # to fetch job logs
   pull-requests: write   # to post PR comments
   issues: write          # PR comments are posted via the issues API
@@ -159,23 +165,57 @@ node test/simulate.js
   its own watcher run's id.
 - The website share-link integration builds the right URL on success and
   degrades to no link (never a crash) on failure or when unconfigured.
+- A 404 from `downloadJobLogsForWorkflowRun` during self-fetch gets turned
+  into the "confirmed GitHub API limitation, use workflow_run" explanation,
+  not left as a bare `Unknown error` or misapplied to the `workflow_run`
+  path where a 404 would mean something else entirely.
 
-**What this does NOT and cannot prove without a real GitHub repo and a
-real failing workflow:**
-- Whether `downloadJobLogsForWorkflowRun` actually returns complete,
-  available logs for a job that is *still in progress* -- the exact
-  situation the primary `if: failure()` pattern runs in (prior steps in
-  the same job have completed, but the job overall hasn't). This is the
-  single biggest open question about this design; everything downstream
-  of "we got the log text" is verified.
-- The exact response shape of that endpoint in practice (it's documented
-  as a redirect; `fetch-logs.js` handles both a direct string body and a
-  `{ url }` pointer, but which one a given octokit version actually
-  surfaces isn't something this environment can observe).
+**Resolved by a real GitHub repo test (was previously an open question in
+this section):** whether `if: failure()` self-fetch actually works. It
+does not, unconditionally -- confirmed by an actual run against a real
+repo (which surfaced the `Unknown error` this section used to be vague
+about) plus GitHub API research (see "Why `if: failure()` doesn't work"
+above). This is why `workflow_run` is now the primary pattern instead of
+an alternative.
+
+**What simulation still does NOT and cannot prove, and needs a real repo
+run of the `workflow_run` pattern specifically to confirm** (see "Plan for
+re-testing" below -- this hasn't been done yet):
+- That `downloadJobLogsForWorkflowRun` returns complete, correctly-shaped
+  logs for a job in a run that a *watcher* workflow observes -- the
+  mocked octokit in `test/simulate.js` returns a canned string for this
+  call, it doesn't confirm the real response shape (documented as a
+  redirect; `fetch-logs.js` handles both a direct string body and a
+  `{ url }` pointer, but which one Octokit actually surfaces in practice
+  is still unconfirmed).
+- That `workflow_run` actually fires promptly and reliably for a
+  `workflow_dispatch`-triggered target run, and that `filter: 'latest'`
+  picks the right attempt.
 - Real `listPullRequestsAssociatedWithCommit` behavior across edge cases
   (forked PRs, multiple open PRs on one commit).
 - How the posted Markdown actually renders on github.com, or Marketplace
   listing/install behavior.
+
+## Plan for re-testing `workflow_run` against a real repo
+
+Same rigor as the test that found the `if: failure()` problem -- an actual
+failure, not a simulation:
+
+1. `.github/workflows/test-action-target.yml`: the same deliberately-failing
+   job as before, but with no diagnosis step at all (just the failure).
+2. `.github/workflows/test-action-watcher.yml`: `on: workflow_run` watching
+   that target workflow by name, `if: conclusion == 'failure'`, running
+   `uses: ./action` (with the same `npm ci` + local-CLI-path overrides the
+   previous test needed) against the target run's id.
+3. Trigger the target workflow manually, wait for it to fail and fully
+   complete, then confirm the watcher run fires, fetches real logs from
+   the now-completed target run, and posts a real comment -- on the commit
+   (no PR exists for a manually-dispatched branch push) with the correct
+   diagnosis content.
+4. If that succeeds: delete or keep both files (they're harmless, manual-
+   trigger-only). If it surfaces another gap, apply the same
+   diagnose-with-real-detail-first discipline this round did rather than
+   guessing at a fix.
 
 ## Publishing
 
